@@ -1,0 +1,307 @@
+---
+title: "Sports Analytics Project"
+author: "Max Bauer"
+date: "2023-10-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Reading in Each CSV
+```{r}
+advanced_stats = read.csv('Player Season Totals - 2022-23 Advanced Stats.csv')
+
+basic_stats = read.csv('Player Season Totals - 2022-23 Basic Stats.csv')
+
+```
+
+```{r}
+library(readr)
+player_bio <- read_csv('Player Season Totals - 2022-23 Player Bios.csv')
+```
+
+
+Merging Data Sets Based on Name
+
+```{r}
+#Combining the player bio and basic stats data sets
+combined_data <- merge(player_bio, basic_stats, by = "Player")
+
+#Combining the advanced stats with the previously merged data
+combined_data2 <- merge(advanced_stats, combined_data, by = "Player")
+```
+
+Adding in the salary dataset
+```{r}
+player_salary = read.csv("2022-2023 Player Salaries.csv")
+#Indexing only the player name and salary columns
+player_and_salary <- player_salary[, c("Name", "AAV")]
+
+#Renaming the "Name" Column to "Player" for a proper merge
+library("dplyr")
+player_and_salary <- player_and_salary %>%
+  rename(Player = Name)
+
+#Renaming the player columns to match case sensitivity
+combined_data2$Player <- tolower(combined_data2$Player)
+player_and_salary$Player <- tolower(player_and_salary$Player)
+
+#Finally merging all the data into the final dataset
+final_data <- merge(combined_data2, player_and_salary, by = "Player")
+```
+
+
+Next, I will have to clean the data. Remove irrelevant and duplicate columns as we move closer towards analysis.
+-For starters, I want to remove some count variables like Corsi For and Corsi Against and leave Corsi %
+```{r}
+library(dplyr)
+cleaned_data <- final_data %>% select(-CF,-CA,-FF,-FA,-SF,-SA,-GF,-GA,-xGF,-xGA,-SCF,-SCA,-HDCF,-HDCA,-HDGF,-HDGA, -MDCF,-MDCA,-MDGF,-MDGA,-LDCF,-LDCA,-LDGF,-LDGA,-Off..Zone.Starts,-Neu..Zone.Starts,-Def..Zone.Starts,-On.The.Fly.Starts,-Off..Zone.Faceoffs,-Neu..Zone.Faceoffs,-Def..Zone.Faceoffs,-X.x,-Team.x,-Position.x,-Birth.Country,-Birth.City,-Date.of.Birth,-Draft.Team,-Round.Pick,-X.y,-Team.y,-Position.y,-GP.y,-X,-Faceoffs.Won,-Faceoffs.Lost,-Hits.Taken,-iCF,-iFF,-iSCF,-iHDCF,-SH.,-ixG,-Total.Penalties,-Minor,-Major,-Misconduct)
+```
+I now want to convert some count statistics to rate variables. Additionally, I want to create a variable called "Years_since_draft" as I believe the longer they have been in the league can correlate to higher salaries. I expect this variable to be normally distributed as well, meaning that the middle of the career is the highest with two tails at a young and old age.
+```{r}
+library(dplyr)
+
+#Converting Draft.Year collumn to a numeric value
+cleaned_data$Draft.Year <- as.numeric(cleaned_data$Draft.Year)
+
+cleaned_data2 <- cleaned_data %>%
+  mutate(
+    GPG = Goals / GP.x,
+    TOIpg = TOI.x / GP.x,
+    AsPG = Total.Assists / GP.x,
+    Primary_AsPG = First.Assists / GP.x,
+    Secondary_AsPG = Second.Assists / GP.x,
+    Years_since_draft = abs(Draft.Year - 2022))
+```
+Testing if there are any duplicate names
+```{r}
+library(dplyr)
+
+non_unique_players <- cleaned_data2 %>%
+  group_by(Player) %>%
+  filter(n() > 1) %>%
+  arrange(Player)
+
+print(unique(non_unique_players$Player))
+```
+There were 16 duplicate sebastian aho rows, but only two players in the league with that name. This will filter it out to show the two proper rows.
+```{r}
+library(dplyr)
+
+non_unique_players <- non_unique_players[c(3, 14), ]
+
+```
+Merging the two datasets
+```{r}
+other_players_data <- cleaned_data2 %>%
+  filter(Player != "sebastian aho")
+
+# Combine the two datasets
+all_data_filtered <- bind_rows(non_unique_players, other_players_data)
+```
+
+Removing all NA values for salary and renaming AAV to Salary
+```{r}
+all_data_filtered <- na.omit(all_data_filtered, cols = "AAV")
+#Renaming AAV
+all_data_filtered <- all_data_filtered %>%
+  rename(Salary = AAV)
+```
+
+Furthermore, I need to transform Salary from a string to an integer
+```{r}
+library(readr)
+
+all_data_filtered$Salary <- parse_number(all_data_filtered$Salary)
+```
+Multiplying Salary by 1,000,000
+```{r}
+all_data_filtered$Salary <- all_data_filtered$Salary * 1000000
+```
+
+Removing salaries of 0
+```{r}
+library(dplyr)
+
+all_data_filtered <- all_data_filtered %>%
+  filter(Salary != 0)
+```
+
+Looking at some descriptive statistics. First let's inspect the dependent variable of salary (AAV).
+
+```{r}
+library(ggplot2)
+library(scales)
+
+ggplot(all_data_filtered, aes(x = Salary)) +
+  geom_histogram(bins = 10, fill = "darkgrey", color = "white") +
+  theme_minimal() +
+  scale_x_continuous(labels = scales::comma, breaks = scales::pretty_breaks(n = 12)) +
+  labs(title = "Histogram of Salary", x = "Salary (in dollars)", y = "Frequency") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+```
+Salary 5 Number Summary
+```{r}
+library(dplyr)
+library(knitr)
+library(kableExtra)
+library(scales)
+
+all_data_filtered %>%
+  summarise(
+    Min = min(Salary, na.rm = TRUE),
+    Q1 = quantile(Salary, 0.25, na.rm = TRUE),
+    Median = median(Salary, na.rm = TRUE),
+    Q3 = quantile(Salary, 0.75, na.rm = TRUE),
+    Max = max(Salary, na.rm = TRUE)
+  ) %>%
+  mutate(across(everything(), dollar_format(prefix = "$", suffix = "", big.mark = ","))) %>%
+  kable(digits = 2, caption = 'Five-Number Summary of Salary Distribution', format = "html") %>%
+  kable_styling(full_width = FALSE)
+
+```
+
+# Reading in data. Creating PPG.
+```{r}
+library(dplyr)
+all_data_filtered2 = read.csv('all_data_filtered.csv')
+all_data_filtered2 <- all_data_filtered2 %>%
+  filter(GP.x >= 41)
+
+all_data_filtered2$Secondary_AsPG = ifelse(is.na(all_data_filtered2$Secondary_AsPG), 0, all_data_filtered2$Secondary_AsPG)
+
+all_data_filtered2$PPG = ((all_data_filtered2$Total.Points + all_data_filtered2$Total.Assists) / all_data_filtered2$GP.x)
+
+all_data_filtered2$PPG = ifelse(is.na(all_data_filtered2$PPG), 0, all_data_filtered2$PPG)
+```
+
+```{r}
+all_data_filtered2$Offense_defense <- ifelse(all_data_filtered2$Position == "D", 1, 0)
+```
+
+```{r}
+library(dplyr)
+subset <- all_data_filtered2 %>%
+  select(Salary, TOIpg, Overall.Draft.Position, GPG, CF., Offense_defense, Years_since_draft)
+```
+
+```{r}
+library(corrplot)
+# Calculate the correlation matrix
+correlation_matrix = cor(subset)
+corrplot(correlation_matrix, method = "color", addCoef.col = "black")
+```
+
+
+# Summary stats for final filtered data.
+```{r}
+summary(all_data_filtered2$Salary)
+```
+
+#Transform response variable.
+```{r}
+all_data_filtered2$Salary_transformed <- log(all_data_filtered2$Salary)
+summary(all_data_filtered2$Salary_transformed)
+```
+
+# Made all chr column values numeric. Identified significant variables.
+```{r}
+all_data_filtered2$IPP <- as.numeric(all_data_filtered2$IPP)
+all_data_filtered2$GF. <- as.numeric(all_data_filtered2$GF.)
+all_data_filtered2$HDGF. <- as.numeric(all_data_filtered2$HDGF.)
+all_data_filtered2$MDGF. <- as.numeric(all_data_filtered2$MDGF.)
+all_data_filtered2$LDGF. <- as.numeric(all_data_filtered2$LDGF.)
+
+model1 = lm(Salary_transformed ~ CF. + FF. + SF. + xGF. + SCF. + PDO + Age + Draft.Round + Overall.Draft.Position+ IPP + Shots + Rush.Attempts + Rebounds.Created + PIM + Penalties.Drawn + Giveaways + Takeaways + Hits + Shots.Blocked + GPG + TOIpg + AsPG + Primary_AsPG + Secondary_AsPG + Years_since_draft + Offense_defense + HDCF. + MDCF. + LDCF. + GF. + HDGF. + MDGF. + LDGF. + PPG, data = all_data_filtered2)
+summary(model1)
+anova(model1)
+```
+#AIC Model
+```{r}
+library(MASS)
+library(dplyr)
+
+full_model <- lm(Salary_transformed ~ Draft.Round + Overall.Draft.Position + Shots + TOIpg + AsPG + Years_since_draft + Offense_defense, data = all_data_filtered2)
+
+best_model <- stepAIC(full_model, direction = "both")
+summary(best_model)
+```
+
+#Mallows CP sig
+```{r}
+library(leaps)
+subset2 <- all_data_filtered2 %>%
+  select(Salary_transformed, Draft.Round, Overall.Draft.Position, Shots, TOIpg, AsPG, Years_since_draft, Offense_defense)
+
+
+```
+#Mallows CP all
+```{r}
+# Load the dplyr package for data manipulation
+library(dplyr)
+require(leaps)
+
+# Select the significant variables from your data frame
+significant_vars2 <- all_data_filtered2[c(
+  "Salary_transformed", "CF.", "FF.", "SF.", "xGF.", "SCF.", "PDO", "Draft.Round",
+  "Overall.Draft.Position", "IPP", "Shots", "Rush.Attempts", "Rebounds.Created", "PIM",
+  "Penalties.Drawn", "Giveaways", "Takeaways", "Hits", "Shots.Blocked", "GPG", "TOIpg",
+  "AsPG", "Years_since_draft", "Offense_defense", "GF.", "HDGF.", "MDGF.", "LDGF.", "PPG"
+)]
+
+best_models_CP <- leaps(x=significant_vars2[,2:29], y=significant_vars2[,1], names = names(significant_vars2)[2:29], method = "adjr2")
+
+```
+
+```{r}
+library(dplyr)
+require(leaps)
+
+significant_vars2 <- all_data_filtered2[c("Draft.Round", "Overall.Draft.Position", "Shots", "TOIpg", "AsPG", "Years_since_draft", "Offense_defense")]
+
+# Create the response variable
+response_var <- all_data_filtered2$Salary_transformed
+
+# Get the number of observations and variables
+n_obs <- nrow(significant_vars2)
+n_vars <- length(colnames(significant_vars2))
+
+# Create an empty vector to store Mallows' Cp values
+cp_values <- numeric(n_vars)
+
+# Perform model selection using Mallows' Cp
+for (i in 1:n_vars) {
+  models <- combn(colnames(significant_vars2), i)
+  n_models <- ncol(models)
+  rss <- numeric(n_models)
+  for (j in 1:n_models) {
+    model_formula <- as.formula(paste("response_var ~", paste(models[, j], collapse = " + ")))
+    model <- lm(model_formula, data = significant_vars2)
+    rss[j] <- sum(model$residuals^2)
+  }
+  cp_values[i] <- min(rss) / (n_obs - i) + 2 * (i + 1)
+}
+
+# Find the best model based on Mallows' Cp
+best_model_size <- which.min(cp_values)
+best_model_variables <- combn(colnames(significant_vars2), best_model_size)
+
+# Create and fit the best model
+final_model <- lm(response_var ~ ., data = significant_vars2[, best_model_variables])
+
+# Print the summary of the best model
+summary(final_model)
+```
+
+```{r}
+require(MASS)
+min_model = lm(Salary_transformed ~ 1, data = significant_vars2)
+max_model = formula(lm(PRICE ~ CRIME + ZONE + INDUS + NOX + RM + AGE + DIS + RAD + TAX + PTRATIO + BLACK + LSTAT, data = boston_complete))
+best_model = step(k = log(506), min_model, direction = "forward", scope = max_model)
+```
+
+
+
+
